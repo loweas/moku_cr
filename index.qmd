@@ -73,8 +73,6 @@ coasts <- sites_join[sites_join$coastal == 1 & sites_join$name!="Home",]
 
 This file merges distance and sites from across the islands. The distance are based on kilometer grid and sites were determined across island.
 
-# Moku
-
 ```{r}
 library(sf)
 library(leaflet)
@@ -105,6 +103,14 @@ leaflet() %>%
 ```
 
 # CV
+
+We evaluate welfare for alternative specific states of coral reef quality using the model presented in Table 2 across all recreational beach sites, holding all other ecological conditions and available amenities constant. A standard economic assumption of linear utility and additive income (Hanemann, 1999) is used to calculate the compensating variation in welfare for individual n associated with changes in site quality for each recreational choice occasion. The compensating variation is given by:
+
+$$
+θ^{(-1)}  ln(∑_{i=0}^I exp(V^*_{ni})/∑_{i=0}^I exp(V_{ni})) 
+$$
+
+, (2) where Vni\* defines the attributes of the sites after the quality change and can be used to calculate the welfare changes for each individual in a sample. For purposes of this study, the aggregated welfare is calculated by the number of people resident in each 1km squared grid. The welfare can be interpreted as the WTP of each individual for avoiding the changes in quality from Vni to Vni\* across all possible sites I.
 
 ```{r }
 
@@ -230,7 +236,7 @@ moku <- st_read("moku_ridge_to_reef_dar.shp/moku_ridge_to_reef_dar.shp")
 # Make sure it’s in WGS84 for leaflet
 moku <- st_transform(moku, 4326)
 
-moku_wtp=all %>% group_by(island, Moku) %>% summarize(WTP_Moku=sum((WTP * incometran_track*grid_km_censusblock_Pop18_densityKM * 365)/-100000)*1.249
+moku_wtp=all %>% group_by(island, Moku) %>% summarize(WTP_Moku=sum((WTP * incometran_track*grid_km_censusblock_Pop18_densityKM * 365)/-1000000)*1.249
   )
 
 moku_wtp$island <- as.character(moku_wtp$island)

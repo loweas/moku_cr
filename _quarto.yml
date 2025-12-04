@@ -1,5 +1,8 @@
 project:
   type: website
+  search: true
+  google-analytics: "G-38FCH31VEK" # Replace with your Google Tag ID
+  
 
 website:
   title: "moku"
