@@ -1,0 +1,322 @@
+---
+title: "moku"
+author: "LoweMackenzie"
+date: "2025-12-03"
+format:
+  html:
+    code-fold: true        # Enables dropdown for code
+    code-tools: true       # (Optional) Adds buttons like "Show Code"
+    code-summary: "Show code"  # (Optional) Custom label for dropdown
+    toc: true
+    toc-location: left
+    page-layout: full
+editor: visual
+bibliography: references.bib
+---
+
+# Recreation by Moku
+
+The following code estimates annual value of coral reef in 2024 dollars by Moku. We use the Economic Model from @fezzi2023. We use recreational sites across the islands with amenities and condition (coral reef and fish biomass). Using compensating variation we estimate the annual welfare driven by the percentage of coral reef in each Moku for all identified recreational sites.
+
+# Running Code
+
+This section calls the necessary R packages and sources external scripts from the original study. These scripts provide the estimated coefficients from the Random Utility Model (RUM), which will be used to simulate individual preferences and estimate welfare. These parameters reflect the marginal utility of various site attributes, including coral reef biomass, travel cost, and environmental conditions.
+
+```{r }
+
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(sf)
+library(gganimate)
+
+### load functions
+
+getwd()
+source("codedata/dummier.R")
+source("codedata/travel_cost.R")
+source("codedata/gridplot.R")
+
+### load model ###
+
+load(file = "codedata/model3.mod")
+
+### this are the travel cost model estimates ###
+
+m1
+
+
+```
+
+```{r }
+
+x1 <- readRDS("codedata/x1.rds")
+x1$coastal[x1$name == "Home"]=0 
+
+### Prepared dataset for maps plot:
+
+out <- x1[order(x1$siteID),]
+out <- out[c(1,3,6,7,8:12)]
+out=out[!duplicated(out[2]),]
+
+##using 85K because that was the survey amount
+out$incometran_track=out$medincome_tract/85000
+sites_join <- read.csv("codedata/sites_join.csv")
+coasts <- sites_join[sites_join$coastal == 1 & sites_join$name!="Home",]
+
+
+```
+
+# Merge
+
+This file merges distance and sites from across the islands. The distance are based on kilometer grid and sites were determined across island.
+
+# Moku
+
+```{r}
+library(sf)
+library(leaflet)
+sites<-  read.csv("codedata/all_sites_wCoralFish.csv")
+sites <- sites[sites$name!="Home",]
+moku <- st_read("moku_ridge_to_reef_dar.shp/moku_ridge_to_reef_dar.shp")
+moku <- st_transform(moku, crs = 4326)
+# Convert to spatial data
+sites_sf <- st_as_sf(sites, coords = c("longitude","latitude"), crs = 4326)
+sites_sf$name <- iconv(sites_sf$name, from = "", to = "UTF-8", sub = "byte")
+leaflet() %>%
+  addProviderTiles("Esri.WorldTopoMap") %>%   # nice basemap
+  addPolygons(
+    data = moku,
+    color = "blue",
+    weight = 2,
+    fillOpacity = 0.2,
+    popup = ~Moku                       
+  ) %>%
+  addCircleMarkers(
+    data = sites_sf,
+    radius = 1,
+    color = "red",
+    fillOpacity = 0.8,
+    popup = ~paste0("Site: ", name) 
+  )
+
+```
+
+# CV
+
+```{r }
+
+# Join moku
+sites_sf <- st_join(sites_sf, moku["Moku"])
+
+sites_sf=sites_sf[c(1,31)] %>%
+  st_drop_geometry() %>%      # remove geometry for pivoting
+  mutate(value = 0) %>%       # create dummy flag
+  pivot_wider(
+    names_from = Moku,
+    values_from = value,
+    values_fill = 1           # fill unassigned Mokū with 0
+  )
+
+x1=merge(x1,sites_sf, by.y = "object_id_final", by.x = "siteID", all.y = TRUE)
+```
+
+```{r }
+### parameters
+
+beta <- m1$results[,1]
+
+x1 <- x1[order(x1$km2_ID,x1$siteID),]	## btw it is correct that the dim(x) is lower than dim(dist) because
+## I aggregated some sites
+length(unique(x1$siteID))
+
+### FINISHED LOADING AND MERGING DATASETS ###
+
+#rm(dist, pop, sitesjoin)
+
+### CALCULATE TRAVEL COST ####
+
+x1$cost <- 0
+x1$duration[ x1$siteID == 351] <- x1$duration[ x1$siteID == 351] + 40		## this sites needs 40min walking to be reached
+## Need to also do this for Hawaii
+### Change here for different fuel cost
+x1$cost <- x1$distance.meters*0.001 * (0.20 / 1.5	)				## fuel cost 
+## assumption on fuel cost:
+#
+# 20 miles/gallon
+# $4.3/gallon
+# means $4.3 per 20 miles --> 0.215 $/mile
+# 10 km --> 6.2 miles --> $1.33 travel cost per km
+# 10km * 0.20 / 1.5 = $1.33  so the values coincide with the cost used above.
+x1$cost <- x1$cost + (x1$duration / 60)* 3/4 * 24.14 	## add the value of time (assuming a 25$ per hour average wage rate)
+x1$cost <- x1$cost * 2 							## the value for a return trip
+#### put Molokini cost equal to the one of Makena Landing Beach Park + 100$ (cost of a snorkeling tour)
+x1$cost[x1$siteID == 388] <- x1$cost[x1$siteID == 359] + 100
+
+
+### Considering a transfer to Oahu:
+#x1[is.na(x1)] <- 0
+x1[1, is.na(x1[1, ])] <- 0
+
+
+X0 <- cbind( x1$cost,x1$home, x1$coastal, x1$citypark, x1$trailall,
+             x1$haleakala, x1$molokini, x1$parking, x1$showers,
+             x1$lifeguard, x1$rock, x1$manmade, x1$beachmedium, x1$beachlarge, x1$surf,
+             x1$swim, x1$snork, x1$res_fish_bio, x1$PNAS, x1$playground, x1$sports,
+             x1$snork*x1$PNAS, x1$snork*x1$res_fish_bio)
+
+X0[is.na(X0)] <- 0
+
+
+xsim <- x1
+
+
+
+```
+
+```{r}
+final <- data.frame(matrix(ncol =2, nrow = 0))
+all <- data.frame(matrix(ncol =2, nrow = 0))
+
+#this needs to be ran as a loop
+for (i in 46:70) {
+  xsim <- x1
+  xsim$PNAS <- xsim$PNAS *xsim[,i]
+  xsim$PNAS[xsim$PNAS <= 0] <- 0
+  
+  X1 <- cbind( xsim$cost,xsim$home, xsim$coastal, xsim$citypark, xsim$trailall,
+               xsim$haleakala, xsim$molokini, xsim$parking, xsim$showers,
+               xsim$lifeguard, xsim$rock, xsim$manmade, xsim$beachmedium, xsim$beachlarge, xsim$surf,
+               xsim$swim, xsim$snork, xsim$res_fish_bio, xsim$PNAS, xsim$playground, xsim$sports,
+               xsim$snork*xsim$PNAS, xsim$snork*xsim$res_fish_bio)
+  
+  X1[is.na(X1)] <- 0
+  
+### CALCULATION OF WTP FOR EACH GRID LOCATION
+  
+wtpw <- quality.change(beta = beta, ### parameters
+                         X0=X0, 	### X variables in the baseline
+                         X1 = X1, 	#### X variables in the scenario
+                         pid = x1$km2_ID,    ### ID of the 1km grid
+                         cost =1)		### column of the cost parameter in the X matrix
+  
+  ### TOTAL WTP
+  
+  b=merge(wtpw,out, by.x=c("id"),by.y=c("km2_ID"))
+  b$Num=i
+  b$Moku= colnames(xsim)[i]
+
+  all=rbind(b,all)
+}
+  moku_wtp=all %>% group_by(island, Moku) %>% summarize(WTP_Moku=sum(WTP * incometran_track*grid_km_censusblock_Pop18_densityKM * 365)/100000
+  )
+
+head(moku_wtp)
+
+
+```
+
+```{r}
+
+library(sf)
+library(leaflet)
+library(dplyr)
+
+# Load your Moku shapefile
+moku <- st_read("moku_ridge_to_reef_dar.shp/moku_ridge_to_reef_dar.shp")
+
+# Make sure it’s in WGS84 for leaflet
+moku <- st_transform(moku, 4326)
+
+moku_wtp=all %>% group_by(island, Moku) %>% summarize(WTP_Moku=sum((WTP * incometran_track*grid_km_censusblock_Pop18_densityKM * 365)/-100000)*1.249
+  )
+
+moku_wtp$island <- as.character(moku_wtp$island)
+moku_wtp$island[which(moku_wtp$island=="Oahu")]="Oʻahu"
+moku_wtp$island[which(moku_wtp$island=="Molokai")]="Molokaʻi"
+moku_wtp$island[which(moku_wtp$island=="Lanai")]="Lānaʻi"
+moku_wtp$island[which(moku_wtp$island=="Kauai")]="Kauaʻi"
+moku_wtp$island[which(moku_wtp$island=="Hawaii")]="Hawaiʻi"
+
+moku=merge(moku,moku_wtp, by.x=c("Moku","Mokupuni"),by.y=c("Moku","island"))
+```
+
+# Map
+
+```{r echo=TRUE}
+
+
+# Option 1: Log-transform for skewed data
+moku$WTP_Moku_log <- log1p(moku$WTP_Moku) # log(1 + x) avoids log(0)
+
+# Define color palette
+pal <- colorNumeric(
+  palette = "viridis",      # perceptually uniform color scale
+  domain = moku$WTP_Moku_log
+)
+
+leaflet(moku) %>%
+  addProviderTiles("Esri.WorldTopoMap") %>%
+  addPolygons(
+    fillColor = ~pal(WTP_Moku_log),
+    color = "black",
+    weight = 1,
+    fillOpacity = 0.8,
+    popup = ~paste0(
+      "<strong>Moku: </strong>", Moku, "<br>",
+      "<strong>Annual Welfare Moku: </strong>", round(WTP_Moku, 2)
+    )
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~WTP_Moku_log,
+    title = "Annual <br> Moku Welfare in Millions",
+    opacity = 0.7,
+    labFormat = labelFormat(transform = function(x) round(expm1(x), 0)) # revert log for labels
+  )
+```
+
+# Table
+
+```{r}
+
+library(dplyr)
+library(gt)
+library(sf)
+
+# Drop geometry and sort by Island
+moku_table <- moku %>%
+  st_drop_geometry() %>%             # remove geometry
+  select(Island = Mokupuni, Moku, WTP_Moku) %>%  # select relevant columns
+  arrange(Island)                     # sort by Island
+
+# Create pretty table
+moku_table %>%
+  gt() %>%
+  tab_header(
+    title = "Annual WTP millions in 2024$ <br> by Moku and Island"
+  ) %>%
+  fmt_number(
+    columns = vars(WTP_Moku),
+    decimals = 2
+  ) %>%
+  data_color(
+    columns = vars(WTP_Moku),
+    colors = scales::col_numeric(
+      palette = c("lightyellow", "orange", "red"),
+      domain = moku_table$WTP_Moku
+    )
+  ) %>%
+  cols_label(
+    Island = "Island",
+    Moku = "Moku",
+    WTP_Moku = "Annual Value in Millions"
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything())
+  )
+```
